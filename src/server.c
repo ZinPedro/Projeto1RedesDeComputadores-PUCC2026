@@ -18,7 +18,24 @@
 typedef struct {
     int client_fd;
     int conectado;
+    pthread_mutex_t mutex;
 } DadosCliente;
+
+//função para definir o status de conexão do cliente de forma thread-safe
+void definir_conectado(DadosCliente *cliente, int valor){
+    pthread_mutex_lock(&cliente->mutex);
+    cliente->conectado = valor;
+    pthread_mutex_unlock(&cliente->mutex);
+}
+
+//função para verificar o status de conexão do cliente de forma thread-safe
+int verificar_conectado(DadosCliente *cliente){
+    int conectado;
+    pthread_mutex_lock(&cliente->mutex);
+    conectado = cliente->conectado;
+    pthread_mutex_unlock(&cliente->mutex);
+    return conectado;
+}
 
 //função para utilização da primeira thread, responsável por receber os dados do cliente
 void *receber_dados(void *arg){
@@ -35,13 +52,13 @@ void *receber_dados(void *arg){
         bytes_recebidos = recv(cliente->client_fd, buffer, BUFFER_SIZE - 1, 0);
 
         if(bytes_recebidos < 0) {
-            cliente->conectado = 0; //marca o cliente como desconectado
+            definir_conectado(cliente, 0); //marca o cliente como desconectado
             perror("Erro ao receber mensagem");
             break;
         }
 
         if(bytes_recebidos == 0) {
-            cliente->conectado = 0; //marca o cliente como desconectado
+            definir_conectado(cliente, 0); //marca o cliente como desconectado
             printf("Cliente desconectado.\n");
             break;
         }
@@ -61,22 +78,24 @@ void *enviar_periodicamente(void *args){
 
     char mensagem[128];
 
-    while(cliente->conectado) {
-        sleep(5); //verifica conexão a cada 5 segundos
+    while(verificar_conectado(cliente)){ 
+        sleep(INTERVALO_TESTE); //verifica conexão a cada 5 segundos
 
         //saí quando o cliente estiver desconectado
-        if(!cliente->conectado){
+        if(!verificar_conectado(cliente)){
             break;
         }
 
         time_t agora = time(NULL);
-        struct tm *horario = localtime(&agora);
+        struct tm horario;
+        localtime_r(&agora, &horario);
 
-        strftime(mensagem, sizeof(mensagem), "%d/%m/%Y %H:%M\n", horario);
+        strftime(mensagem, sizeof(mensagem), "%d/%m/%Y %H:%M\n", &horario);
 
-        if(send(cliente->client_fd, mansagem, strlen(mensagem), 0) < 0){
+        if(send(cliente->client_fd, mensagem, strlen(mensagem), 0) < 0){
             perror("Erro ao enviar mensagem periodica");
-            cliente->conectado = 0; //marca o cliente como desconectado
+            definir_conectado(cliente, 0); //marca o cliente como desconectado
+            shutdown(cliente->client_fd, SHUT_RDWR); //fecha o socket do cliente para interromper a thread de recebimento
             break;
         }
     }
@@ -166,6 +185,12 @@ int main(){
         cliente.client_fd = client_fd;
         cliente.conectado = 1; //marca o cliente como conectado
 
+        if(pthread_mutex_init(&cliente.mutex, NULL) != 0){
+            perror("Erro ao inicializar mutex");
+            close(client_fd);
+            continue; //continua para aceitar novas conexões mesmo que uma falhe
+        }
+
         //obter a hora atual
         time_t agora = time(NULL);
         struct tm *horario = localtime(&agora);
@@ -178,17 +203,33 @@ int main(){
         //configuração do send (socket, mensagem, tamanho da mensagem, flags)
         if(send(client_fd, mensagem, strlen(mensagem), 0) < 0){
             perror("Erro ao enviar mensagem");
+            pthread_mutex_destroy(&cliente.mutex); //destruir o mutex antes de sair
             close(client_fd);
             continue; //continua para aceitar novas conexões mesmo que uma falhe
         }
 
+        //criação da thread de recebimento
         int resultado_thread = pthread_create(&thread_recebimento, NULL, receber_dados, &cliente);
-        int resultado_thread_envio = pthread_create(&thread_envio_periodico, NULL, enviar_periodicamente, &cliente);
 
         //verifica se a thread foi criada com sucesso
         if(resultado_thread != 0){
             //erro ao criar a thread, pthread_create já retorna um código de erro, que pode ser convertido em uma mensagem de erro usando strerror
             fprintf(stderr, "Erro ao criar thread de recebimento: %s\n", strerror(resultado_thread));
+            pthread_mutex_destroy(&cliente.mutex); //destruir o mutex antes de sair
+            close(client_fd);
+            continue; //continua para aceitar novas conexões mesmo que uma falhe
+        }
+
+        //criação da thread de envio periodico
+        int resultado_thread_envio = pthread_create(&thread_envio_periodico, NULL, enviar_periodicamente, &cliente);
+
+        //verifica se a thread foi criada com sucesso
+        if(resultado_thread_envio != 0){
+            fprintf(stderr, "Erro ao criar thread de envio periodico: %s\n", strerror(resultado_thread_envio));
+            definir_conectado(&cliente, 0); //marca o cliente como desconectado
+            shutdown(cliente.client_fd, SHUT_RDWR); //fecha o socket do cliente para interromper a thread de recebimento
+            pthread_join(thread_recebimento, NULL); //espera a thread de recebimento terminar
+            pthread_mutex_destroy(&cliente.mutex); //destruir o mutex antes de sair
             close(client_fd);
             continue; //continua para aceitar novas conexões mesmo que uma falhe
         }
@@ -197,6 +238,7 @@ int main(){
         pthread_join(thread_recebimento, NULL); //espera a thread de recebimento terminar
         pthread_join(thread_envio_periodico, NULL); //espera a thread de envio periodico terminar
         
+        pthread_mutex_destroy(&cliente.mutex); //destruir o mutex antes de sair
 
         close(client_fd);
     }
