@@ -1,14 +1,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
-#include <sys/socket.h>  
-#include <netinet/in.h>
-#include <arpa/inet.h>
-
-#include <pthread.h>
-#include <time.h>
+//inclui o arquivo de cabeçalho da plataforma para compatibilidade entre Windows e Linux
+#include "../include/platform.h"
 
 #define PORT 8080
 #define BUFFER_SIZE 1024
@@ -16,44 +11,44 @@
 
 //estrutura para armazenar os dados do cliente (numero do cliente e status de conexão)
 typedef struct {
-    int client_fd;
+    socket_t client_fd;
     int conectado;
-    pthread_mutex_t mutex;
+    mutex_t mutex;
 } DadosCliente;
 
 //função para definir o status de conexão do cliente de forma thread-safe
 void definir_conectado(DadosCliente *cliente, int valor){
-    pthread_mutex_lock(&cliente->mutex);
+    bloquear_mutex(&cliente->mutex);
     cliente->conectado = valor;
-    pthread_mutex_unlock(&cliente->mutex);
+    liberar_mutex(&cliente->mutex);
 }
 
 //função para verificar o status de conexão do cliente de forma thread-safe
 int verificar_conectado(DadosCliente *cliente){
     int conectado;
-    pthread_mutex_lock(&cliente->mutex);
+    bloquear_mutex(&cliente->mutex);
     conectado = cliente->conectado;
-    pthread_mutex_unlock(&cliente->mutex);
+    liberar_mutex(&cliente->mutex);
     return conectado;
 }
 
 //função para utilização da primeira thread, responsável por receber os dados do cliente
-void *receber_dados(void *arg){
+THREAD_FUNC(receber_dados) {
 
     DadosCliente *cliente = (DadosCliente *)arg;
     //buffer para armazenar os dados recebidos do cliente
     char buffer[BUFFER_SIZE];
     //variável para armazenar o número de bytes recebidos
-    ssize_t bytes_recebidos;    
+    socket_io_t bytes_recebidos;    
 
     //receber mensagem do cliente
     //configuração do recv (socket, buffer, tamanho do buffer, flags)
     while(1){
         bytes_recebidos = recv(cliente->client_fd, buffer, BUFFER_SIZE - 1, 0);
 
-        if(bytes_recebidos < 0) {
+        if(bytes_recebidos == PLATFORM_SOCKET_ERRO) {
             definir_conectado(cliente, 0); //marca o cliente como desconectado
-            perror("Erro ao receber mensagem");
+            mostrar_erro_socket("Erro ao receber mensagem");
             break;
         }
 
@@ -68,18 +63,18 @@ void *receber_dados(void *arg){
         
     }
     
-    return NULL;
+    return THREAD_RETURN;
 }
 
 //função para utilização da segunda thread, responsável por enviar periodicamente mensagens para o cliente
-void *enviar_periodicamente(void *args){
+THREAD_FUNC(enviar_periodicamente) {
 
-    DadosCliente *cliente = (DadosCliente *)args;
+    DadosCliente *cliente = (DadosCliente *)arg;
 
     char mensagem[128];
 
     while(verificar_conectado(cliente)){ 
-        sleep(INTERVALO_TESTE); //verifica conexão a cada 5 segundos
+        dormir_segundos(INTERVALO_TESTE); //verifica conexão a cada 5 segundos
 
         //saí quando o cliente estiver desconectado
         if(!verificar_conectado(cliente)){
@@ -88,56 +83,64 @@ void *enviar_periodicamente(void *args){
 
         time_t agora = time(NULL);
         struct tm horario;
-        localtime_r(&agora, &horario);
+        
+        if(!obter_horario_local(&agora, &horario)) {
+            fprintf(stderr, "Erro ao obter horário local.\n");
+            continue;
+        }
 
         strftime(mensagem, sizeof(mensagem), "%d/%m/%Y %H:%M\n", &horario);
 
-        if(send(cliente->client_fd, mensagem, strlen(mensagem), 0) < 0){
-            perror("Erro ao enviar mensagem periodica");
+        if(send(cliente->client_fd, mensagem, (int)strlen(mensagem), 0) == PLATFORM_SOCKET_ERRO){
+            mostrar_erro_socket("Erro ao enviar mensagem periodica");
             definir_conectado(cliente, 0); //marca o cliente como desconectado
-            shutdown(cliente->client_fd, SHUT_RDWR); //fecha o socket do cliente para interromper a thread de recebimento
+            desligar_socket(cliente->client_fd); //fecha o socket do cliente para interromper a thread de recebimento
             break;
         }
     }
 
 
-    return NULL;
+    return THREAD_RETURN;
 }
 
 int main(){
 
-    int server_fd;
-    int client_fd;
+    socket_t server_fd;
+    socket_t client_fd;
 
     //vetor para armazenar a hora e mensagem de conexao (11:23: CONECTADO!!)
     char mensagem[64];
 
     //variável para armazenar as threads de recebimento e envio periodico
-    pthread_t thread_recebimento;
-    pthread_t thread_envio_periodico;
+    thread_t thread_recebimento;
+    thread_t thread_envio_periodico;
 
     //informações do servidor e do cliente
     struct sockaddr_in server_addr = {0};
     struct sockaddr_in client_addr = {0};
-    socklen_t client_addr_len = sizeof(client_addr); //tamanho do endereço do cliente
+    sock_len_t client_addr_len = sizeof(client_addr); //tamanho do endereço do cliente
+
+    //inicializa o winsock no Windows
+    if(!iniciar_sockets()) {
+        return 1;
+    }
 
     //Criação do socket (IPv4, TCP, protocolo padrão)
     server_fd = socket(AF_INET, SOCK_STREAM, 0);
 
-    if (server_fd < 0) {
-        perror("Erro ao criar o socket");
+    if (server_fd == PLATFORM_SOCKET_INVALIDO) {
+        mostrar_erro_socket("Erro ao criar o socket");
+        finalizar_sockets(); //encerra o winsock que inicializamos no começo
         return 1;
     }
 
     printf("Socket criado com sucesso.\n");
 
-    // Configuração do socket para reutilizar o endereço para evitar o erro "Address already in use" ao reiniciar o servidor rapidamente
+    if(!configurar_reuso_endereco(server_fd)){
+        mostrar_erro_socket("Erro ao configurar reuso de endereço (setsockopt)");
 
-    int opt = 1;
-
-    if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
-        perror("Erro no setsockopt");
-        close(server_fd);
+        fechar_socket(server_fd);
+        finalizar_sockets(); //encerra o winsock que inicializamos no começo
         return 1;
     }
 
@@ -147,18 +150,20 @@ int main(){
 
     //configuração da bind (socket, endereço, tamanho do endereço)
 
-    if (bind(server_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-        perror("Erro ao fazer bind");
-        close(server_fd);
+    if (bind(server_fd, (struct sockaddr*)&server_addr, sizeof(server_addr)) == PLATFORM_SOCKET_ERRO) {
+        mostrar_erro_socket("Erro ao fazer bind");
+        fechar_socket(server_fd);
+        finalizar_sockets();
         return 1;
     }
 
     printf("Bind realizado com sucesso na porta %d.\n", PORT);
 
     //configuração do listen (socket, tamanho da fila de conexões)
-    if(listen(server_fd, 1) < 0){
-        perror("Erro no listen");
-        close(server_fd);
+    if(listen(server_fd, 1) == PLATFORM_SOCKET_ERRO) {
+        mostrar_erro_socket("Erro no listen");
+        fechar_socket(server_fd);
+        finalizar_sockets();
         return 1;
     }
 
@@ -173,8 +178,8 @@ int main(){
         //configuração do accept (socket, endereço do cliente, tamanho do endereço do cliente)
         client_fd = accept(server_fd, (struct sockaddr*)&client_addr, &client_addr_len);
 
-        if (client_fd < 0) {
-            perror("Erro no accept");
+        if (client_fd == PLATFORM_SOCKET_INVALIDO) {
+            mostrar_erro_socket("Erro no accept");
             continue; //continua para aceitar novas conexões mesmo que uma falhe
         }   
 
@@ -185,66 +190,70 @@ int main(){
         cliente.client_fd = client_fd;
         cliente.conectado = 1; //marca o cliente como conectado
 
-        if(pthread_mutex_init(&cliente.mutex, NULL) != 0){
-            perror("Erro ao inicializar mutex");
-            close(client_fd);
+        //inicializa o mutex do cliente
+        if(!iniciar_mutex(&cliente.mutex)) {
+            fprintf(stderr, "Erro ao inicializar mutex para o cliente.\n");
+            fechar_socket(client_fd);
             continue; //continua para aceitar novas conexões mesmo que uma falhe
         }
 
         //obter a hora atual
         time_t agora = time(NULL);
-        struct tm *horario = localtime(&agora);
+        struct tm horario;
+
+        if(!obter_horario_local(&agora, &horario)){
+            fprintf(stderr, "Erro ao obter horario local.\n");
+
+            destruir_mutex(&cliente.mutex);
+            fechar_socket(client_fd);
+
+            continue;
+        }
 
         //Montar mensagem
-        strftime(mensagem, sizeof(mensagem), "%H:%M: CONECTADO!!\n", horario);
+        strftime(mensagem, sizeof(mensagem), "%H:%M: CONECTADO!!\n", &horario);
 
         //enviar mensagem para o cliente
         printf("Enviando ao Cliente: %s", mensagem);
         //configuração do send (socket, mensagem, tamanho da mensagem, flags)
-        if(send(client_fd, mensagem, strlen(mensagem), 0) < 0){
-            perror("Erro ao enviar mensagem");
-            pthread_mutex_destroy(&cliente.mutex); //destruir o mutex antes de sair
-            close(client_fd);
+        if(send(client_fd, mensagem, (int)strlen(mensagem), 0) == PLATFORM_SOCKET_ERRO){
+            mostrar_erro_socket("Erro ao enviar mensagem");
+            destruir_mutex(&cliente.mutex); //destruir o mutex antes de sair
+            fechar_socket(client_fd);
             continue; //continua para aceitar novas conexões mesmo que uma falhe
         }
 
         //criação da thread de recebimento
-        int resultado_thread = pthread_create(&thread_recebimento, NULL, receber_dados, &cliente);
-
-        //verifica se a thread foi criada com sucesso
-        if(resultado_thread != 0){
-            //erro ao criar a thread, pthread_create já retorna um código de erro, que pode ser convertido em uma mensagem de erro usando strerror
-            fprintf(stderr, "Erro ao criar thread de recebimento: %s\n", strerror(resultado_thread));
-            pthread_mutex_destroy(&cliente.mutex); //destruir o mutex antes de sair
-            close(client_fd);
+        if(!criar_thread(&thread_recebimento, receber_dados, &cliente)){
+            fprintf(stderr, "Erro ao criar thread de recebimento.\n");
+            destruir_mutex(&cliente.mutex); //destruir o mutex antes de sair
+            fechar_socket(client_fd);
             continue; //continua para aceitar novas conexões mesmo que uma falhe
         }
 
         //criação da thread de envio periodico
-        int resultado_thread_envio = pthread_create(&thread_envio_periodico, NULL, enviar_periodicamente, &cliente);
-
-        //verifica se a thread foi criada com sucesso
-        if(resultado_thread_envio != 0){
-            fprintf(stderr, "Erro ao criar thread de envio periodico: %s\n", strerror(resultado_thread_envio));
+        if(!criar_thread(&thread_envio_periodico, enviar_periodicamente, &cliente)){
+            fprintf(stderr, "Erro ao criar thread de envio periodico.\n");
             definir_conectado(&cliente, 0); //marca o cliente como desconectado
-            shutdown(cliente.client_fd, SHUT_RDWR); //fecha o socket do cliente para interromper a thread de recebimento
-            pthread_join(thread_recebimento, NULL); //espera a thread de recebimento terminar
-            pthread_mutex_destroy(&cliente.mutex); //destruir o mutex antes de sair
-            close(client_fd);
+            desligar_socket(cliente.client_fd); //fecha o socket do cliente para interromper a thread de recebimento
+            aguardar_thread(thread_recebimento); //espera a thread de recebimento terminar
+            destruir_mutex(&cliente.mutex); //destruir o mutex antes de sair
+            fechar_socket(client_fd);
             continue; //continua para aceitar novas conexões mesmo que uma falhe
         }
 
         
-        pthread_join(thread_recebimento, NULL); //espera a thread de recebimento terminar
-        pthread_join(thread_envio_periodico, NULL); //espera a thread de envio periodico terminar
+        aguardar_thread(thread_recebimento); //espera a thread de recebimento terminar
+        aguardar_thread(thread_envio_periodico); //espera a thread de envio periodico
         
-        pthread_mutex_destroy(&cliente.mutex); //destruir o mutex antes de sair
+        destruir_mutex(&cliente.mutex); //destruir o mutex antes de sair
 
-        close(client_fd);
+        fechar_socket(client_fd);
     }
 
     //fechar o socket do servidor, saida do loop ainda nao implementada
-    close(server_fd);
+    fechar_socket(server_fd);
+    finalizar_sockets(); //encerra o winsock que inicializamos no começo
 
     return 0;
 }
