@@ -20,7 +20,7 @@
 
     #define PLATFORM_SOCKET_INVALIDO INVALID_SOCKET
     #define PLATFORM_SOCKET_ERRO SOCKET_ERROR
-    #define PLARFORM_SHUT_RDWR SD_BOTH
+    #define PLATFORM_SHUT_RDWR SD_BOTH
 
 #else
     #include <sys/types.h>
