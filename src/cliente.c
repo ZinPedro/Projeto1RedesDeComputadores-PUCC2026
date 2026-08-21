@@ -1,48 +1,52 @@
 #include <stdio.h>
-#include <winsock2.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "../include/platform.h"
 
 #define PORT 8080
 
 int main()
 {
-    SOCKET clientSocket;
-    printf("Cliente iniciado!\n");
+ 
+        socket_t clientSocket;
 
-    WSADATA wsaData;
+        struct sockaddr_in serverAddr = {0};
 
-    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0)
-    {
-        printf("erro ao iniciar o socket\n");
-        return 1;
-    }
+        printf("Cliente iniciado!\n");
 
-    clientSocket = socket(AF_INET, SOCK_STREAM, 0);
+        //inicializa o winsock no Windows
+        if (!iniciar_sockets()) {
+            return 1;
+        }
 
-    if (clientSocket == INVALID_SOCKET)
-    {
-        printf("erro ao criar o socket\n");
-        WSACleanup();
-        return 1;
-    }
+        clientSocket = socket(AF_INET, SOCK_STREAM, 0);
 
-    struct sockaddr_in serverAddr;
+        if (clientSocket == PLATFORM_SOCKET_INVALIDO)
+        {
+            mostrar_erro_socket("Erro ao criar socket");
+            finalizar_sockets(); //encerra o winsock que inicializamos no começo
+            return 1;
+        }
 
-    serverAddr.sin_family = AF_INET;
-    serverAddr.sin_port = htons(PORT);
-    serverAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
+        serverAddr.sin_family = AF_INET;
+        serverAddr.sin_port = htons(PORT);
+        serverAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
 
-    if (connect(clientSocket, (struct sockaddr *)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR)
-    {
-        printf("erro ao conectar ao servidor\n");
-        closesocket(clientSocket); //fecha o socket se a conexão falhar
-        WSACleanup(); //encerra o winsock que inicializamos no começo
-        return 1;
-    }
+        if (connect(clientSocket, (struct sockaddr *)&serverAddr, sizeof(serverAddr)) == PLATFORM_SOCKET_ERRO)
+        {
+            mostrar_erro_socket("Erro ao conectar ao servidor");
+            fechar_socket(clientSocket); //fecha o socket se a conexão falhar
+            finalizar_sockets(); //encerra o winsock que inicializamos no começo
+            return 1;
+        }
 
-    printf("conectado ao servidor\n");
+        printf("conectado ao servidor\n");
 
-    closesocket(clientSocket); //fecha o socket
-    WSACleanup(); //encerra o winsock
+        fechar_socket(clientSocket); //fecha o socket após a conexão
+        finalizar_sockets(); //encerra o winsock que inicializamos no começo
 
     return 0;
+
+
 }
