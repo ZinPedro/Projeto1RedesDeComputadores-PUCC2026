@@ -1,7 +1,7 @@
 #ifndef PROTOCOL_H
 #define PROTOCOL_H
 
-#include <pthread.h>
+#include "platform.h"
 
 #define MAX_NOME 64
 #define MAX_MSG 512
@@ -28,7 +28,7 @@ typedef struct mem_compartilhada {
 
 } shared_data_t;
 
-extern pthread_mutex_t lock; // mutex para controlar a condicao de corrida na memoria compartilhada
+extern mutex_t lock; // mutex para controlar a condicao de corrida na memoria compartilhada
 
 // funcao que vai receber a info do socket ve qual acao é, de quem é, qual msg,  grava o resultado na mem compartlhada
 
