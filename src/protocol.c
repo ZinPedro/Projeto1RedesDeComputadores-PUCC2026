@@ -57,6 +57,7 @@ tipo_acao_t process_shared_data(shared_data_t *shared_data, char *saida, int tam
         case ACAO_MUDAR_NOME:
             strncpy(shared_data->nome_usuario, shared_data->conteudo, MAX_NOME - 1);
             shared_data->nome_usuario[MAX_NOME - 1] = '\0';
+            printf("DEBUG: nome atualizado para '%s'\n", shared_data->nome_usuario); // remover depois
             saida[0] = '\0';
             break;
 

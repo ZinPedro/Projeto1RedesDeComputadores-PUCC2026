@@ -5,15 +5,18 @@
 //inclui o arquivo de cabeçalho da plataforma para compatibilidade entre Windows e Linux
 #include "../include/platform.h"
 
+#include "../include/protocol.h"
+
 #define PORT 8080
 #define BUFFER_SIZE 1024
-#define INTERVALO_TESTE 5
+#define INTERVALO_TESTE 10
 
 //estrutura para armazenar os dados do cliente (numero do cliente e status de conexão)
 typedef struct {
     socket_t client_fd;
     int conectado;
     mutex_t mutex;
+    shared_data_t protocolo; // aqui é a variavel que vai ter acesso a mem compartilhada para gravar o que o usuario digitou
 } DadosCliente;
 
 //função para definir o status de conexão do cliente de forma thread-safe
@@ -57,9 +60,10 @@ THREAD_FUNC(receber_dados) {
             printf("Cliente desconectado.\n");
             break;
         }
+
         //verifica o tamanho da mensagem recebida e adiciona o terminador de string
         buffer[bytes_recebidos] = '\0'; // Adiciona o terminador de string
-        printf("Mensagem recebida do cliente: %s\n", buffer);
+        parse_input(buffer, &cliente->protocolo);
         
     }
     
@@ -80,6 +84,26 @@ THREAD_FUNC(enviar_periodicamente) {
         if(!verificar_conectado(cliente)){
             break;
         }
+
+    char resposta[BUFFER_SIZE];
+    tipo_acao_t acao = process_shared_data(&cliente->protocolo, resposta, sizeof(resposta)); // processa qual acao foi executada
+
+    if (acao == ACAO_DESCONECTAR)  // se foi desconectar, desconecta
+    {
+        definir_conectado(cliente, 0);
+        desligar_socket(cliente->client_fd);
+        break;
+    }
+
+    if (strlen(resposta) > 0) 
+    {
+        if (send(cliente->client_fd, resposta, (int)strlen(resposta), 0) == PLATFORM_SOCKET_ERRO) 
+        {   
+            mostrar_erro_socket("Erro ao enviar resposta do protocolo");
+            definir_conectado(cliente, 0);
+            break;
+        }
+    }
 
         time_t agora = time(NULL);
         struct tm horario;
@@ -124,6 +148,8 @@ int main(){
     if(!iniciar_sockets()) {
         return 1;
     }
+
+    protocol_init(); // incializar o mutex
 
     //Criação do socket (IPv4, TCP, protocolo padrão)
     server_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -189,6 +215,11 @@ int main(){
         DadosCliente cliente;
         cliente.client_fd = client_fd;
         cliente.conectado = 1; //marca o cliente como conectado
+
+        snprintf(cliente.protocolo.nome_usuario, MAX_NOME, "%s:%d", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));  // define o nome padrao do usuario como "IP:porta"
+        cliente.protocolo.pendente = 0;
+        cliente.protocolo.acao = ACAO_NENHUMA;
+
 
         //inicializa o mutex do cliente
         if(!iniciar_mutex(&cliente.mutex)) {
