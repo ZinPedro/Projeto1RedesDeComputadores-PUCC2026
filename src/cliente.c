@@ -19,6 +19,7 @@ typedef struct //dados compartilhados pela threads
 void definir_conectado(DadosCliente*cliente, int valor)
 {
     bloquear_mutex(&cliente-> mutex);
+
     cliente -> conectado = valor;
     liberar_mutex(&cliente -> mutex);
 }
