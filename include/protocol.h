@@ -32,10 +32,12 @@ extern mutex_t lock; // mutex para controlar a condicao de corrida na memoria co
 
 // funcao que vai receber a info do socket ve qual acao é, de quem é, qual msg,  grava o resultado na mem compartlhada
 
+void protocol_init();
+
 void parse_input(const char *linha, shared_data_t *shared_data); 
 
 // funcao para o servidor processar o que estiver pendente, escreve o texto formatado para imprimir, retorna 1 se tiver processado algo, 0 se nao processou
 
-int process_shared_data(shared_data_t *shared_data, char *saida, int *tam_saida);
+tipo_acao_t process_shared_data(shared_data_t *shared_data, char *saida, int tam_saida);
 
 #endif
