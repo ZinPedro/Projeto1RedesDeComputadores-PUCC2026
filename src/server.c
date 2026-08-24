@@ -77,8 +77,10 @@ THREAD_FUNC(enviar_periodicamente) {
 
     char mensagem[128];
 
+    time_t ultimo_envio_horario = time(NULL);
+
     while(verificar_conectado(cliente)){ 
-        dormir_segundos(INTERVALO_TESTE); //verifica conexão a cada 5 segundos
+
 
         //saí quando o cliente estiver desconectado
         if(!verificar_conectado(cliente)){
@@ -106,21 +108,28 @@ THREAD_FUNC(enviar_periodicamente) {
     }
 
         time_t agora = time(NULL);
-        struct tm horario;
-        
-        if(!obter_horario_local(&agora, &horario)) {
-            fprintf(stderr, "Erro ao obter horário local.\n");
-            continue;
-        }
 
-        strftime(mensagem, sizeof(mensagem), "%d/%m/%Y %H:%M\n", &horario);
+        //verifica 1 minuto desde de o ultimo envio de mensagem 
+        if(agora - ultimo_envio_horario >= INTERVALO_TESTE){
+            struct tm horario;
 
-        if(send(cliente->client_fd, mensagem, (int)strlen(mensagem), 0) == PLATFORM_SOCKET_ERRO){
-            mostrar_erro_socket("Erro ao enviar mensagem periodica");
-            definir_conectado(cliente, 0); //marca o cliente como desconectado
-            desligar_socket(cliente->client_fd); //fecha o socket do cliente para interromper a thread de recebimento
-            break;
+            if(!obter_horario_local(&agora, &horario)) {
+                fprintf(stderr, "Erro ao obter horário local.\n");
+                continue;
+            }
+            
+            strftime(mensagem, sizeof(mensagem), "%d/%m/%Y %H:%M\n", &horario);
+
+            if(send(cliente->client_fd, mensagem, (int)strlen(mensagem), 0) == PLATFORM_SOCKET_ERRO){
+                mostrar_erro_socket("Erro ao enviar mensagem periodica");
+                definir_conectado(cliente, 0); //marca o cliente como desconectado
+                desligar_socket(cliente->client_fd); //fecha o socket do cliente para interromper a thread de recebimento
+                break;
+
+            }
+            ultimo_envio_horario = agora;
         }
+        dormir_milisegundos(100);
     }
 
 
@@ -217,8 +226,10 @@ int main(){
         cliente.conectado = 1; //marca o cliente como conectado
 
         snprintf(cliente.protocolo.nome_usuario, MAX_NOME, "%s:%d", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));  // define o nome padrao do usuario como "IP:porta"
-        cliente.protocolo.pendente = 0;
-        cliente.protocolo.acao = ACAO_NENHUMA;
+        //inicializa estrutura da fila
+        cliente.protocolo.inicio = 0;
+        cliente.protocolo.fim = 0;
+        cliente.protocolo.quantidade = 0;
 
 
         //inicializa o mutex do cliente

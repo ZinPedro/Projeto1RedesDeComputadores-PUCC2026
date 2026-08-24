@@ -187,4 +187,16 @@ static inline int aguardar_thread(thread_t thread) {
     #endif
 }
 
+static inline void dormir_milisegundos(unsigned int milisegundos){
+    #ifdef _WIN32
+        Sleep(milissegundos);
+    #else
+        struct timespec tempo;
+        tempo.tv_sec = milisegundos / 1000;
+        tempo.tv_nsec = (long)(milisegundos % 1000) * 1000000L;
+
+        nanosleep(&tempo, NULL);
+    #endif
+}
+
 #endif // PLATFORM_H

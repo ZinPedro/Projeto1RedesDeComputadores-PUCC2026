@@ -57,30 +57,35 @@ void parse_input(const char *linha, shared_data_t *shared_data)
 
 tipo_acao_t process_shared_data(shared_data_t *shared_data, char *saida, int tam_saida) 
 {
-    tipo_acao_t acao_processada;
+    item_acao_t item;
 
     bloquear_mutex(&lock);
 
-    if (!shared_data->pendente) // se pendente for diferente de 1, portanto nao tem nada pendente para ele processar, libera para a outra thread
-    {
+    //verifica fila vazia
+    if(shared_data->quantidade == 0){
         liberar_mutex(&lock);
         saida[0] = '\0';
         return ACAO_NENHUMA;
     }
 
-    acao_processada = shared_data->acao; // ve qual acao foi feita 
+    // copia proxima ação da fila
+    item = shared_data->fila[shared_data->inicio]; //copia ação da fila
 
-    switch (acao_processada) // switch case para checar todos os caso
+    shared_data->inicio = (shared_data->inicio +1) % MAX_FILA; //avança inicio na fila
+
+    shared_data->quantidade--;
+
+    switch (item.acao) // switch case para checar todos os caso
     { 
         case ACAO_MUDAR_NOME:
-            strncpy(shared_data->nome_usuario, shared_data->conteudo, MAX_NOME - 1);
+            strncpy(shared_data->nome_usuario, item.conteudo, MAX_NOME - 1);
             shared_data->nome_usuario[MAX_NOME - 1] = '\0';
             printf("DEBUG: nome atualizado para '%s'\n", shared_data->nome_usuario); // remover depois
             saida[0] = '\0';
             break;
 
         case ACAO_ENVIAR_MSG:
-            snprintf(saida, tam_saida, "Voce digitou: %s\n", shared_data->conteudo);
+            snprintf(saida, tam_saida, "Voce digitou: %s\n", item.conteudo);
             break;
 
         case ACAO_DESCONECTAR:
@@ -92,11 +97,8 @@ tipo_acao_t process_shared_data(shared_data_t *shared_data, char *saida, int tam
             break;
     }
 
-    shared_data->acao = ACAO_NENHUMA;
-    shared_data->pendente = 0;
-
     liberar_mutex(&lock);
 
-    return acao_processada;
+    return item.acao;
 }
 
