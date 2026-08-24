@@ -9,7 +9,7 @@
 
 #define PORT 8080
 #define BUFFER_SIZE 1024
-#define INTERVALO_TESTE 10
+#define INTERVALO_TESTE 60
 
 //estrutura para armazenar os dados do cliente (numero do cliente e status de conexão)
 typedef struct {

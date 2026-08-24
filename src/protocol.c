@@ -11,28 +11,46 @@ void protocol_init()
 
 void parse_input(const char *linha, shared_data_t *shared_data) 
 {
-    bloquear_mutex(&lock); // Tranco o mutex porque vamos escrever na mem compartilhada
 
-    if (strncmp(linha, ":nome ", 6) == 0)   // cada if aqui checa ara ver qual acao foi executada (olha se foi nome, desconectar ou enviar mensagem)
+    tipo_acao_t acao;
+    char conteudo [MAX_MSG];
+
+    //indentifica a ação recebida
+    if(strncmp(linha, ":nome ", 6) == 0) // cada if aqui checa ara ver qual acao foi executada (olha se foi nome, desconectar ou enviar mensagem)
     {
-        shared_data->acao = ACAO_MUDAR_NOME;    // passo a acao mudar nome para a acao na mem compartilhada para o servidor saber qual é a acao
-        strncpy(shared_data->conteudo, linha + 6, MAX_MSG - 1); // copia o nome
-        shared_data->conteudo[MAX_MSG - 1] = '\0'; // parar no \0 que é onde acabou a string
+        acao = ACAO_MUDAR_NOME; // passo a acao mudar nome para a acao na mem compartilhada para o servidor saber qual é a acao
 
-    } 
+        strncpy (conteudo, linha + 6, MAX_MSG - 1); // copia o nome
+        conteudo [MAX_MSG - 1] = '\0';  // parar no \0 que é onde acabou a string
+    }
     else if (strncmp(linha, ":quit", 5) == 0) 
     {
-        shared_data->acao = ACAO_DESCONECTAR;
-        shared_data->conteudo[0] = '\0';
+        acao = ACAO_DESCONECTAR;
+        conteudo[0] = '\0';
     } 
     else 
     {
-        shared_data->acao = ACAO_ENVIAR_MSG;
-        strncpy(shared_data->conteudo, linha, MAX_MSG - 1);
-        shared_data->conteudo[MAX_MSG - 1] = '\0';
+        acao = ACAO_ENVIAR_MSG;
+        strncpy(conteudo, linha, MAX_MSG - 1);
+        conteudo[MAX_MSG - 1] = '\0';
     }
 
-    shared_data->pendente = 1; // pendente = 1 significa que tem uma acao nova
+    bloquear_mutex(&lock); // Tranco o mutex porque vamos escrever na mem compartilhada
+
+    //verifica fila cheia
+    if(shared_data->quantidade >= MAX_FILA){
+        fprintf(stderr, "Fila de acoes cheia\n");
+        liberar_mutex(&lock);
+        return;
+    }
+
+    shared_data->fila[shared_data->fim].acao = acao; //adciona ação na fila
+
+    strncpy(shared_data->fila[shared_data->fim].conteudo, conteudo, MAX_MSG - 1); //adciona conteudo da ação na fila
+
+    shared_data->fila[shared_data->fim].conteudo[MAX_MSG - 1] = '\0'; //adciona sinalizador de fim da string 
+    shared_data->fim = (shared_data->fim + 1) % MAX_FILA;   //altera posição do fim da fila
+    shared_data->quantidade++; //registra ação no numero de ações
 
     liberar_mutex(&lock); // destranca o mutex
 }
@@ -81,3 +99,4 @@ tipo_acao_t process_shared_data(shared_data_t *shared_data, char *saida, int tam
 
     return acao_processada;
 }
+

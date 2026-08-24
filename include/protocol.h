@@ -5,6 +5,7 @@
 
 #define MAX_NOME 64
 #define MAX_MSG 512
+#define MAX_FILA 32
 
 // Criando uma enumeracao das acoes predefinidas que o usuario pode fazer 
 
@@ -17,15 +18,23 @@ typedef enum {
 
 } tipo_acao_t;
 
+
+//estrutura para guardar ações na fila
+typedef struct {
+    tipo_acao_t acao;
+    char conteudo[MAX_MSG];
+} item_acao_t;
+
 // Estrutura para a memória compartilhada entre as threads thread 1 (gravar/escrever) e a thread 2 (ler/processar) do servidor
 
 typedef struct mem_compartilhada {
 
-    tipo_acao_t acao; // acao que vai fazer
     char nome_usuario[MAX_NOME]; // nome do usuario para aparecer na mensagem
-    char conteudo[MAX_MSG]; // a mensagem em si
-    int pendente; // aviso se tem mensagem nova ou nao
+    item_acao_t fila[MAX_FILA]; // fila de ações pendentes
 
+    int inicio; //proxima ação a ser processada
+    int fim;    //lugar para onde vai uma nova ação
+    int quantidade; //quantidade de ações na fila
 } shared_data_t;
 
 extern mutex_t lock; // mutex para controlar a condicao de corrida na memoria compartilhada
